@@ -1,0 +1,21 @@
+{
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "hosting": {
+    "public": ".",
+    "ignore": [
+      "firebase.json",
+      "firestore.rules",
+      "KURULUM.md",
+      "ANDROID_APK.md",
+      "package.json",
+      "capacitor.config.json",
+      "scripts/**",
+      "www/**",
+      "android/**",
+      "**/.*",
+      "**/node_modules/**"
+    ]
+  }
+}

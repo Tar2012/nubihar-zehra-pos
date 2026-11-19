@@ -1,0 +1,20 @@
+{
+  "name": "Nübihar & Zehra Yayınları — Satış",
+  "short_name": "Nübihar Satış",
+  "description": "Nübihar ve Zehra Yayınları barkodlu kitap satış ve fiyat uygulaması",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#edf7fd",
+  "theme_color": "#0ea5e9",
+  "orientation": "portrait-primary",
+  "lang": "tr",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

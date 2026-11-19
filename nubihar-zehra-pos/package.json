@@ -1,0 +1,16 @@
+{
+  "name": "nubihar-zehra-pos",
+  "version": "1.0.0",
+  "description": "Nübihar & Zehra Yayınları — Android ve Bilgisayar Barkodlu Satış Paneli",
+  "scripts": {
+    "prepare-www": "node scripts/prepare-www.js",
+    "android:sync": "npm run prepare-www && npx cap sync android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.1.2",
+    "@capacitor/core": "^6.1.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.1.2"
+  }
+}

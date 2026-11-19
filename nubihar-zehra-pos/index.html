@@ -1,0 +1,968 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Nübihar &amp; Zehra Yayınları — Satış Paneli</title>
+  <meta name="description" content="Nübihar ve Zehra Yayınları sade barkodlu satış paneli">
+  <meta name="theme-color" content="#0ea5e9">
+  <meta name="mobile-web-app-capable" content="yes">
+  <link rel="icon" type="image/svg+xml" href="icon.svg">
+  <link rel="manifest" href="manifest.json">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+
+  <!-- Firebase SDK (Otomatik Bulut Yedekleme) -->
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+
+  <!-- Kamera Barkod Okuyucu -->
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
+  <!-- Excel (.xlsx / .xls / .csv) -->
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+
+  <!-- Firebase Config -->
+  <script src="js/config.js"></script>
+</head>
+<body>
+
+<div id="toast-container"></div>
+<div id="print-frame"></div>
+
+<div class="app-shell">
+
+  <!-- ==================== TEK SADE ÜST MENÜ ==================== -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-dot"></span>
+      <span class="b-n">Nübihar</span> &amp; <span class="b-z">Zehra</span>
+    </div>
+
+    <nav class="main-nav">
+      <button type="button" class="nav-tab active" data-section="pos">Satış</button>
+      <button type="button" class="nav-tab" data-section="receipts">Fişler</button>
+      <button type="button" class="nav-tab" data-section="products">Kitaplar</button>
+      <button type="button" class="nav-tab" data-section="reports">Raporlar</button>
+      <button type="button" class="nav-tab" data-section="settings">Ayarlar</button>
+    </nav>
+
+    <div class="topbar-right">
+      <button type="button" class="btn btn-primary btn-sm" id="app-update-btn" style="display:none;">
+        Güncelleme Hazır
+      </button>
+      <button type="button" class="btn btn-primary btn-sm" id="android-install-btn" style="display:none;">
+        Uygulamayı Kur
+      </button>
+      <button type="button" class="icon-pill" id="mobile-mode-toggle-btn" title="Android telefon kamera modunu önizle">
+        Telefon Modu
+      </button>
+      <button type="button" class="icon-pill" id="cloud-status-chip" title="Bulut yedekleme durumu">
+        <span class="status-dot"></span> Bulut
+      </button>
+      <button type="button" class="icon-pill" id="voice-toggle-btn" title="Okutulan kitabın fiyatını sesli oku">
+        Sesli Fiyat
+      </button>
+      <button type="button" class="icon-pill" id="theme-toggle-btn" title="Açık / Koyu tema">
+        Koyu
+      </button>
+    </div>
+  </header>
+
+  <!-- ==================== SAYFA İÇERİĞİ ==================== -->
+  <main class="page-wrap">
+
+    <!-- ==================================================== -->
+    <!-- 1. SATIŞ (BİLGİSAYAR + ANDROID KAMERA MODU)          -->
+    <!-- ==================================================== -->
+    <section class="section active" id="section-pos">
+
+      <!-- ANDROID TELEFON MODU: ANINDA KAMERA + BÜYÜK FİYAT + İNDİRİM -->
+      <div class="mobile-pos-view" id="mobile-pos-view">
+        <div class="mob-cam-card">
+          <div class="mob-cam-stage">
+            <div id="mob-camera-reader"></div>
+            <div class="mob-cam-placeholder" id="mob-cam-placeholder">
+              <div style="font-size:15px; font-weight:700;">Barkod Okumak İçin Kamerayı Açın</div>
+              <div style="font-size:12px; opacity:0.8;">Okuttuğunuz anda kitap fiyatı ekrana gelir</div>
+              <button type="button" class="btn btn-primary btn-lg" id="mob-cam-start-btn">Kamerayı Başlat</button>
+            </div>
+          </div>
+          <div class="mob-cam-bar">
+            <input type="text" class="input" id="mob-barcode-input" placeholder="Barkod yaz veya kitap ara...">
+            <button type="button" class="btn btn-soft btn-sm" id="mob-cam-toggle-btn">Kamera Aç</button>
+          </div>
+          <div id="mob-search-results" style="display:none; border-top:1px solid var(--border); max-height:200px; overflow-y:auto;"></div>
+        </div>
+
+        <!-- ANLIK FİYAT & İNDİRİM KARTI -->
+        <div class="mob-price-card" id="mob-price-card">
+          <div class="mob-book-head">
+            <div>
+              <span id="mob-book-pub"></span>
+              <div class="mob-book-title" id="mob-book-title">—</div>
+              <div class="mob-book-sub" id="mob-book-sub"></div>
+            </div>
+            <button type="button" class="modal-close" id="mob-card-close" title="Kapat">✕</button>
+          </div>
+
+          <div class="mob-price-hero">
+            <div class="mob-price-old" id="mob-price-old">0,00 ₺</div>
+            <div class="mob-price-main" id="mob-price-main">0,00 ₺</div>
+            <div class="mob-price-note" id="mob-price-note">Liste Fiyatı</div>
+          </div>
+
+          <div class="mob-disc-section">
+            <div style="display:flex; align-items:center; justify-content:space-between;">
+              <span style="font-size:12.5px; font-weight:600; color:var(--text-secondary);">İndirim Uygula</span>
+              <div style="display:flex; align-items:center; gap:5px;">
+                <input type="number" class="inline-num" id="mob-disc-input" value="0" min="0" max="100" step="1" style="width:58px;">
+                <span style="font-size:13px; font-weight:700; color:var(--primary-text);">%</span>
+              </div>
+            </div>
+            <div class="mob-disc-row" id="mob-disc-chips">
+              <button type="button" class="mob-disc-chip active" data-mob-pct="0">%0</button>
+              <button type="button" class="mob-disc-chip" data-mob-pct="10">%10</button>
+              <button type="button" class="mob-disc-chip" data-mob-pct="20">%20</button>
+              <button type="button" class="mob-disc-chip" data-mob-pct="30">%30</button>
+              <button type="button" class="mob-disc-chip" data-mob-pct="50">%50</button>
+            </div>
+          </div>
+
+          <div class="mob-card-actions">
+            <button type="button" class="btn btn-soft" id="mob-add-cart-btn">Sepete Ekle</button>
+            <button type="button" class="btn btn-primary" id="mob-instant-sell-btn">Hemen Sat</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- BİLGİSAYAR MODU -->
+      <div class="pos-grid">
+
+        <!-- SOL: BARKOD + SEPET + TOPLAM -->
+        <div class="pos-left-card">
+
+          <!-- Düzenleme Uyarısı -->
+          <div class="editing-banner" id="editing-banner">
+            <span id="editing-banner-text">Düzenlenen Fiş: —</span>
+            <button type="button" class="btn btn-outline btn-sm" id="cancel-edit-receipt-btn">İptal</button>
+          </div>
+
+          <!-- Barkod + Satış / İade -->
+          <div class="pos-scan-row">
+            <div class="barcode-wrap">
+              <input
+                type="text"
+                class="barcode-input"
+                id="barcode-input"
+                placeholder="Barkod okutun veya yazıp Enter'a basın..."
+                autocomplete="off"
+                autofocus
+              >
+              <button type="button" class="barcode-cam-btn" id="camera-btn">Kamera</button>
+            </div>
+
+            <div class="mode-pill-group">
+              <label class="mode-opt sale-active" id="mode-sale-label">
+                <input type="radio" name="receipt-mode" value="sale" id="mode-sale" checked>Satış
+              </label>
+              <label class="mode-opt" id="mode-return-label">
+                <input type="radio" name="receipt-mode" value="return" id="mode-return">İade
+              </label>
+            </div>
+          </div>
+
+          <!-- Son Okutulan Ürün -->
+          <div class="last-scan-strip" id="last-scan-strip">
+            <span id="lsc-text">—</span>
+            <strong id="lsc-price" style="color:var(--primary-text); font-size:15px;">0,00 ₺</strong>
+          </div>
+
+          <!-- Sepet Tablosu -->
+          <div class="cart-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Kitap</th>
+                  <th style="width:94px;">Adet</th>
+                  <th style="width:82px;">Fiyat</th>
+                  <th style="width:62px;">% İnd.</th>
+                  <th style="width:88px; text-align:right;">Tutar</th>
+                  <th style="width:32px;"></th>
+                </tr>
+              </thead>
+              <tbody id="cart-tbody"></tbody>
+            </table>
+          </div>
+
+          <!-- Alt Özet ve Tamamla -->
+          <div class="pos-footer">
+            <div class="discount-bar">
+              <div class="disc-chips" id="discount-presets">
+                <span style="font-size:12px; color:var(--text-secondary);">İndirim:</span>
+                <button type="button" class="disc-chip active" data-pct="0">%0</button>
+                <button type="button" class="disc-chip" data-pct="10">%10</button>
+                <button type="button" class="disc-chip" data-pct="20">%20</button>
+                <button type="button" class="disc-chip" data-pct="30">%30</button>
+                <button type="button" class="disc-chip" data-pct="50">%50</button>
+              </div>
+              <div style="display:flex; align-items:center; gap:5px;">
+                <input type="number" class="inline-num" id="discount-pct" value="0" min="0" max="100" step="1" title="Özel indirim yüzdesi">
+                <span style="font-size:12.5px; font-weight:600; color:var(--text-secondary);">%</span>
+              </div>
+            </div>
+
+            <div class="totals-row">
+              <div class="t-box">
+                <div class="t-box-label">Ara Toplam</div>
+                <div class="t-box-val" id="subtotal-display">0,00 ₺</div>
+              </div>
+              <div class="t-box">
+                <div class="t-box-label">İndirim</div>
+                <div class="t-box-val" id="discount-display" style="color:var(--yellow);">0,00 ₺</div>
+              </div>
+              <div class="t-box grand" id="grand-box">
+                <div class="t-box-label" id="grand-label">Fiş Tutarı</div>
+                <div class="t-box-val" id="total-display">0,00 ₺</div>
+              </div>
+            </div>
+
+            <div class="pay-action-row">
+              <div class="pay-tabs" id="pos-pay-tabs">
+                <button type="button" class="pay-tab active" data-type="cash">Nakit</button>
+                <button type="button" class="pay-tab" data-type="card">Kart</button>
+                <button type="button" class="pay-tab" data-type="transfer">Havale</button>
+              </div>
+              <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+                <button type="button" class="btn btn-outline btn-sm" id="btn-clear-receipt" title="Sepeti temizle">Temizle</button>
+                <button type="button" class="btn btn-soft btn-sm" id="btn-cash-modal" disabled>Para Üstü</button>
+                <button type="button" class="btn btn-outline btn-sm" id="btn-print-last">Son Fiş</button>
+                <button type="button" class="btn btn-primary btn-lg" id="pay-btn" disabled>Fişi Kaydet</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SAĞ: SADE KİTAP SEÇİMİ -->
+        <div class="pos-right-card">
+          <div class="tiles-top">
+            <input type="text" class="input" id="product-search" placeholder="Kitap veya yazar ara..." style="flex:1; min-width:140px;">
+            <button type="button" class="btn btn-primary btn-sm pub-chip-btn" data-pub="all">Tümü</button>
+            <button type="button" class="btn btn-outline btn-sm pub-chip-btn" data-pub="nübihar">Nübihar</button>
+            <button type="button" class="btn btn-outline btn-sm pub-chip-btn" data-pub="zehra">Zehra</button>
+            <button type="button" class="btn btn-soft btn-sm" id="pos-quick-add-book-btn" title="Yeni kitap ekle">+ Kitap</button>
+          </div>
+          <div class="tiles-grid" id="pos-tiles-grid"></div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ==================================================== -->
+    <!-- 2. FİŞLER (DÜZENLE, İADE, YAZDIR, SİL)               -->
+    <!-- ==================================================== -->
+    <section class="section" id="section-receipts">
+      <div class="page-bar">
+        <div class="page-bar-title">Fişler</div>
+        <div class="page-bar-actions">
+          <button type="button" class="btn btn-primary btn-sm" id="receipts-new-btn">+ Yeni Satış</button>
+          <button type="button" class="btn btn-outline btn-sm" id="export-receipts-btn">Excel İndir</button>
+        </div>
+      </div>
+
+      <div class="filter-bar">
+        <div class="form-group">
+          <label>Başlangıç</label>
+          <input type="date" class="input" id="filter-date-from">
+        </div>
+        <div class="form-group">
+          <label>Bitiş</label>
+          <input type="date" class="input" id="filter-date-to">
+        </div>
+        <div class="form-group">
+          <label>Tür</label>
+          <select class="input" id="filter-receipt-type">
+            <option value="all">Tümü</option>
+            <option value="sale">Satış</option>
+            <option value="return">İade</option>
+          </select>
+        </div>
+        <div class="form-group" style="flex:1; min-width:170px;">
+          <label>Ara</label>
+          <input type="text" class="input" id="receipt-search" placeholder="Fiş no veya kitap adı...">
+        </div>
+        <button type="button" class="btn btn-outline btn-sm" id="filter-receipts-clear-btn">Sıfırla</button>
+      </div>
+
+      <div class="summary-strip">
+        <div class="sum-tile">
+          <div class="sum-tile-label">Toplam Satış</div>
+          <div class="sum-tile-val" style="color:var(--green-dark);" id="rec-sum-sales">0,00 ₺</div>
+          <div class="sum-tile-sub" id="rec-sum-sales-cnt">0 fiş</div>
+        </div>
+        <div class="sum-tile">
+          <div class="sum-tile-label">Toplam İade</div>
+          <div class="sum-tile-val" style="color:var(--red);" id="rec-sum-returns">0,00 ₺</div>
+          <div class="sum-tile-sub" id="rec-sum-returns-cnt">0 fiş</div>
+        </div>
+        <div class="sum-tile">
+          <div class="sum-tile-label">Net Tutar</div>
+          <div class="sum-tile-val" style="color:var(--primary-text);" id="rec-sum-net">0,00 ₺</div>
+          <div class="sum-tile-sub" id="rec-sum-total-cnt">0 işlem</div>
+        </div>
+      </div>
+
+      <div class="table-box">
+        <table>
+          <thead>
+            <tr>
+              <th>Fiş No</th>
+              <th>Tür</th>
+              <th>Tarih</th>
+              <th>Saat</th>
+              <th>Ürünler</th>
+              <th>Ödeme</th>
+              <th>İndirim</th>
+              <th style="text-align:right;">Tutar</th>
+              <th style="text-align:right;">İşlemler</th>
+            </tr>
+          </thead>
+          <tbody id="receipts-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ==================================================== -->
+    <!-- 3. KİTAPLAR (TEKLİ + EXCEL TOPLU YÜKLEME)            -->
+    <!-- ==================================================== -->
+    <section class="section" id="section-products">
+      <div class="page-bar">
+        <div class="page-bar-title">
+          Kitaplar <span style="font-size:12px; font-weight:500; opacity:0.8;" id="products-count-label"></span>
+        </div>
+        <div class="page-bar-actions">
+          <button type="button" class="btn btn-primary btn-sm" id="add-product-btn">+ Kitap Ekle</button>
+          <button type="button" class="btn btn-soft btn-sm" id="open-excel-import-btn">Excel Toplu Yükle</button>
+          <button type="button" class="btn btn-outline btn-sm" id="bulk-price-btn">Toplu Fiyat</button>
+          <button type="button" class="btn btn-outline btn-sm" id="export-products-excel-btn">Excel İndir</button>
+        </div>
+      </div>
+
+      <div class="filter-bar">
+        <div class="form-group" style="flex:1; min-width:190px;">
+          <label>Ara</label>
+          <input type="text" class="input" id="products-search" placeholder="Kitap adı, yazar veya barkod...">
+        </div>
+        <div class="form-group">
+          <label>Yayınevi</label>
+          <select class="input" id="products-publisher-filter">
+            <option value="all">Tümü</option>
+            <option value="nübihar">Nübihar</option>
+            <option value="zehra">Zehra</option>
+            <option value="other">Diğer</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Durum</label>
+          <select class="input" id="products-avail-filter">
+            <option value="all">Tümü</option>
+            <option value="available">Var</option>
+            <option value="unavailable">Yok</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="table-box">
+        <table>
+          <thead>
+            <tr>
+              <th>Yayınevi</th>
+              <th>Kitap Adı</th>
+              <th>Yazar</th>
+              <th>Barkod</th>
+              <th style="text-align:right;">Fiyat</th>
+              <th>Durum</th>
+              <th style="text-align:right;">İşlemler</th>
+            </tr>
+          </thead>
+          <tbody id="products-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ==================================================== -->
+    <!-- 4. RAPORLAR (SADE GÖRÜNÜM + TEK TIKLA ÖZELLEŞTİR)    -->
+    <!-- ==================================================== -->
+    <section class="section" id="section-reports">
+      <div class="page-bar">
+        <div class="page-bar-title">
+          Raporlar <span style="font-size:12px; font-weight:500; opacity:0.85;" id="rpt-active-summary"></span>
+        </div>
+        <div class="page-bar-actions">
+          <button type="button" class="btn btn-soft btn-sm" id="toggle-rpt-customizer-btn">Raporu Özelleştir</button>
+          <button type="button" class="btn btn-outline btn-sm" id="rpt-export-excel-btn">Excel İndir</button>
+          <button type="button" class="btn btn-outline btn-sm" id="rpt-print-btn">Yazdır / PDF</button>
+        </div>
+      </div>
+
+      <!-- Sade Tarih Seçici -->
+      <div class="card">
+        <div style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap;">
+          <div class="form-group">
+            <label>Başlangıç Tarihi</label>
+            <input type="date" class="input" id="rpt-date-from">
+          </div>
+          <div class="form-group">
+            <label>Bitiş Tarihi</label>
+            <input type="date" class="input" id="rpt-date-to">
+          </div>
+          <div style="display:flex; gap:6px; flex-wrap:wrap; padding-bottom:1px;">
+            <button type="button" class="btn btn-outline btn-sm rpt-quick-period" data-period="today">Bugün</button>
+            <button type="button" class="btn btn-outline btn-sm rpt-quick-period" data-period="week">7 Gün</button>
+            <button type="button" class="btn btn-soft btn-sm rpt-quick-period" data-period="month">Bu Ay</button>
+            <button type="button" class="btn btn-outline btn-sm rpt-quick-period" data-period="year">Bu Yıl</button>
+            <button type="button" class="btn btn-outline btn-sm rpt-quick-period" data-period="all">Tümü</button>
+          </div>
+        </div>
+
+        <!-- İsteğe Bağlı Açılan Dinamik Özelleştirme Paneli -->
+        <div class="rpt-customizer" id="rpt-customizer">
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px;">
+            <div class="form-group">
+              <label>Yayınevi</label>
+              <select class="input" id="rpt-filter-pub">
+                <option value="all">Tümü</option>
+                <option value="nübihar">Nübihar</option>
+                <option value="zehra">Zehra</option>
+                <option value="other">Diğer</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Ödeme</label>
+              <select class="input" id="rpt-filter-pay">
+                <option value="all">Tümü</option>
+                <option value="cash">Nakit</option>
+                <option value="card">Kart</option>
+                <option value="transfer">Havale</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Tür</label>
+              <select class="input" id="rpt-filter-type">
+                <option value="all">Net (Satış - İade)</option>
+                <option value="sale">Sadece Satış</option>
+                <option value="return">Sadece İade</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Gruplama</label>
+              <select class="input" id="rpt-group-by">
+                <option value="day">Günlük</option>
+                <option value="month">Aylık</option>
+                <option value="publisher">Yayınevine Göre</option>
+                <option value="payment">Ödeme Tipine Göre</option>
+                <option value="book">Kitaba Göre</option>
+              </select>
+            </div>
+          </div>
+
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+            <div class="widget-toggles" id="rpt-widget-toggles">
+              <label class="toggle-chip checked"><input type="checkbox" data-widget="summary" checked>Özet</label>
+              <label class="toggle-chip checked"><input type="checkbox" data-widget="grouped" checked>Tablo</label>
+              <label class="toggle-chip checked"><input type="checkbox" data-widget="publisher" checked>Yayınevi</label>
+              <label class="toggle-chip checked"><input type="checkbox" data-widget="payment" checked>Ödeme</label>
+              <label class="toggle-chip checked"><input type="checkbox" data-widget="topbooks" checked>Çok Satanlar</label>
+              <label class="toggle-chip"><input type="checkbox" data-widget="details">Fiş Detayları</label>
+            </div>
+            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+              <div id="rpt-templates-list" style="display:flex; gap:6px; flex-wrap:wrap;"></div>
+              <button type="button" class="btn btn-outline btn-sm" id="rpt-save-template-btn">Şablon Kaydet</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Özet Kartlar -->
+      <div class="summary-strip" id="rpt-block-summary">
+        <div class="sum-tile">
+          <div class="sum-tile-label">Net Satış</div>
+          <div class="sum-tile-val" style="color:var(--primary-text);" id="rpt-net">0,00 ₺</div>
+        </div>
+        <div class="sum-tile">
+          <div class="sum-tile-label">Brüt Satış</div>
+          <div class="sum-tile-val" style="color:var(--green-dark);" id="rpt-gross">0,00 ₺</div>
+        </div>
+        <div class="sum-tile">
+          <div class="sum-tile-label">İade</div>
+          <div class="sum-tile-val" style="color:var(--red);" id="rpt-returns">0,00 ₺</div>
+        </div>
+        <div class="sum-tile">
+          <div class="sum-tile-label">Fiş / Kitap</div>
+          <div class="sum-tile-val"><span id="rpt-count">0</span> / <span id="rpt-books">0</span></div>
+        </div>
+        <div class="sum-tile">
+          <div class="sum-tile-label">İndirim</div>
+          <div class="sum-tile-val" style="color:var(--yellow);" id="rpt-discounts">0,00 ₺</div>
+        </div>
+      </div>
+
+      <!-- Kırılım Tablosu -->
+      <div class="card" id="rpt-block-grouped">
+        <div class="card-head"><span id="rpt-grouped-title">Günlük Kırılım</span></div>
+        <div class="table-box" style="box-shadow:none;">
+          <table>
+            <thead>
+              <tr>
+                <th id="rpt-grouped-col-label">Tarih</th>
+                <th>İşlem</th>
+                <th>Net Adet</th>
+                <th>İndirim</th>
+                <th style="text-align:right;">Net Tutar</th>
+              </tr>
+            </thead>
+            <tbody id="rpt-grouped-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Grafikler -->
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:12px;">
+        <div class="card" id="rpt-block-publisher">
+          <div class="card-head">Yayınevine Göre</div>
+          <div class="bar-chart" id="publisher-chart"></div>
+        </div>
+        <div class="card" id="rpt-block-payment">
+          <div class="card-head">Ödeme Tipine Göre</div>
+          <div class="bar-chart" id="payment-chart"></div>
+        </div>
+      </div>
+
+      <!-- En Çok Satanlar -->
+      <div class="card" id="rpt-block-topbooks">
+        <div class="card-head">En Çok Satan Kitaplar</div>
+        <div class="table-box" style="box-shadow:none;">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Kitap</th>
+                <th>Yayınevi</th>
+                <th>Adet</th>
+                <th style="text-align:right;">Hasılat</th>
+              </tr>
+            </thead>
+            <tbody id="top-books-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- İsteğe Bağlı Detaylı Fişler -->
+      <div class="card" id="rpt-block-details" style="display:none;">
+        <div class="card-head">Fiş Detayları</div>
+        <div class="table-box" style="box-shadow:none;">
+          <table>
+            <thead>
+              <tr>
+                <th>Fiş No</th>
+                <th>Tür</th>
+                <th>Tarih</th>
+                <th>Saat</th>
+                <th>Ödeme</th>
+                <th style="text-align:right;">Tutar</th>
+              </tr>
+            </thead>
+            <tbody id="rpt-details-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================================================== -->
+    <!-- 5. AYARLAR & OTOMATİK BULUT YEDEKLEME                -->
+    <!-- ==================================================== -->
+    <section class="section" id="section-settings">
+      <div class="page-bar">
+        <div class="page-bar-title">Bulut Yedekleme &amp; Ayarlar</div>
+        <div class="page-bar-actions">
+          <button type="button" class="btn btn-primary btn-sm" id="cloud-backup-now-btn">Şimdi Buluta Yedekle</button>
+          <button type="button" class="btn btn-outline btn-sm" id="cloud-sync-local-btn">Yereli Buluta Aktar</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <span>Otomatik Bulut Yedekleme</span>
+          <span class="badge badge-sale" id="cloud-settings-badge">Kontrol ediliyor...</span>
+        </div>
+        <p style="font-size:13px; color:var(--text-secondary); margin-bottom:12px;">
+          Her satış, iade veya kitap değişikliğinde verileriniz otomatik olarak Google Firebase bulutuna kaydedilir.
+        </p>
+        <div style="display:flex; gap:14px; align-items:center; flex-wrap:wrap; margin-bottom:14px;">
+          <label style="display:inline-flex; align-items:center; gap:7px; font-size:13px; cursor:pointer;">
+            <input type="checkbox" id="auto-cloud-snapshot-chk" checked>
+            Otomatik bulut yedek noktalarını sakla
+          </label>
+          <span style="font-size:12px; color:var(--text-muted);" id="cloud-last-sync-text">Son yedek: —</span>
+        </div>
+        <div id="cloud-backups-list" style="display:flex; flex-direction:column; gap:6px;"></div>
+      </div>
+
+      <div class="card" id="firebase-setup-hint" style="display:none;">
+        <div class="card-head">Bulut Bağlantısını Açma</div>
+        <p style="font-size:13px; color:var(--text-secondary);">
+          Şu an yerel modda çalışıyorsunuz. Otomatik bulut yedekleme için
+          <a href="KURULUM.md" target="_blank" style="color:var(--primary-text); text-decoration:underline; font-weight:600;">KURULUM.md</a>
+          rehberindeki 3 adımı yapıp <code>js/config.js</code> dosyasını doldurmanız yeterlidir.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <span>Fiş / İşletme Bilgileri</span>
+          <button type="button" class="btn btn-primary btn-sm" id="save-settings-btn">Kaydet</button>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>İşletme Adı</label>
+            <input type="text" class="input" id="setting-business-name" placeholder="Nübihar & Zehra Yayınları">
+          </div>
+          <div class="form-group">
+            <label>Telefon</label>
+            <input type="text" class="input" id="setting-phone" placeholder="0xxx xxx xx xx">
+          </div>
+        </div>
+        <div class="form-row" style="margin-top:10px;">
+          <div class="form-group">
+            <label>Adres</label>
+            <input type="text" class="input" id="setting-address" placeholder="İşletme adresi">
+          </div>
+          <div class="form-group">
+            <label>Fiş Alt Notu</label>
+            <input type="text" class="input" id="setting-thanks" placeholder="Alışverişiniz için teşekkürler!">
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- MOBİL YÜZEN SEPET ÇUBUĞU -->
+  <div class="mob-cart-bar" id="mob-cart-bar">
+    <div>
+      <div style="font-size:11.5px; opacity:0.9;" id="mob-cart-count-text">0 kitap</div>
+      <strong style="font-size:18px;" id="mob-cart-total-text">0,00 ₺</strong>
+    </div>
+    <button type="button" class="btn btn-outline btn-sm" id="mob-open-cart-btn" style="background:#ffffff; color:#0369a1; border-color:#ffffff;">
+      Sepeti Tamamla
+    </button>
+  </div>
+
+  <!-- ANDROID ALT NAVİGASYON -->
+  <nav class="mobile-bottom-nav" id="mobile-bottom-nav">
+    <button type="button" class="mbn-btn active" data-section="pos">Tara</button>
+    <button type="button" class="mbn-btn" data-section="receipts">Fişler</button>
+    <button type="button" class="mbn-btn" data-section="products">Kitaplar</button>
+    <button type="button" class="mbn-btn" data-section="reports">Rapor</button>
+    <button type="button" class="mbn-btn" data-section="settings">Ayarlar</button>
+  </nav>
+</div>
+
+<!-- MOBİL SEPET ÖZET MODALI -->
+<div class="modal-overlay" id="mobile-cart-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">Sepet</div>
+      <button type="button" class="modal-close" data-close="mobile-cart-modal">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="mob-cart-items-list" style="display:flex; flex-direction:column; gap:8px; max-height:260px; overflow-y:auto;"></div>
+      <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 12px; border-radius:10px; background:var(--aqua-100); border:1px solid var(--aqua-200);">
+        <span style="font-weight:600; color:var(--primary-text);">Toplam:</span>
+        <strong style="font-size:22px; color:var(--primary-text);" id="mob-modal-total">0,00 ₺</strong>
+      </div>
+      <div class="pay-tabs" style="width:100%;" id="mob-pay-tabs">
+        <button type="button" class="pay-tab active" style="flex:1;" data-mob-pay="cash">Nakit</button>
+        <button type="button" class="pay-tab" style="flex:1;" data-mob-pay="card">Kart</button>
+        <button type="button" class="pay-tab" style="flex:1;" data-mob-pay="transfer">Havale</button>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-outline" id="mob-clear-cart-btn">Temizle</button>
+      <button type="button" class="btn btn-primary btn-lg" id="mob-complete-sale-btn">Satışı Tamamla</button>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== MODALLER ==================== -->
+
+<!-- PARA ÜSTÜ / TAHSİLAT -->
+<div class="modal-overlay" id="payment-modal">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <div class="modal-title" id="pm-title">Para Üstü Hesapla</div>
+      <button type="button" class="modal-close" data-close="payment-modal">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="text-align:center; padding:14px; border-radius:10px; background:var(--aqua-100); border:1px solid var(--aqua-200);">
+        <div style="font-size:12px; color:var(--primary-text);" id="pm-label">Fiş Tutarı</div>
+        <div style="font-size:26px; font-weight:800; color:var(--primary-text);" id="pm-amount">0,00 ₺</div>
+      </div>
+      <div class="pay-tabs" style="width:100%;">
+        <button type="button" class="pay-tab active" style="flex:1;" data-modal-pay="cash">Nakit</button>
+        <button type="button" class="pay-tab" style="flex:1;" data-modal-pay="card">Kart</button>
+        <button type="button" class="pay-tab" style="flex:1;" data-modal-pay="transfer">Havale</button>
+      </div>
+      <div id="cash-box">
+        <div class="form-group">
+          <label>Verilen Nakit (₺)</label>
+          <input type="number" class="input" id="cash-received" placeholder="0.00" min="0" step="0.01" style="font-size:17px; font-weight:700;">
+        </div>
+        <div id="change-box" style="margin-top:10px; padding:10px 12px; border-radius:8px; background:var(--green-bg); border:1px solid var(--green-border); display:none; justify-content:space-between; align-items:center;">
+          <span style="font-size:13px; color:var(--green-dark);">Para Üstü:</span>
+          <strong style="font-size:18px; color:var(--green-dark);" id="change-val">0,00 ₺</strong>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-outline" data-close="payment-modal">İptal</button>
+      <button type="button" class="btn btn-primary" id="complete-payment-btn">Fişi Kaydet</button>
+    </div>
+  </div>
+</div>
+
+<!-- KAYITSIZ BARKOD -->
+<div class="modal-overlay" id="unknown-barcode-modal">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <div class="modal-title">Barkod Kayıtlı Değil</div>
+      <button type="button" class="modal-close" data-close="unknown-barcode-modal">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:13px; color:var(--text-secondary);">Bu barkod sistemde bulunamadı:</p>
+      <div id="unknown-barcode-display" style="padding:11px; text-align:center; font-family:monospace; font-size:18px; font-weight:700; background:var(--aqua-50); border:1px solid var(--aqua-200); border-radius:8px; color:var(--primary-text);"></div>
+      <p style="font-size:13px; color:var(--text-secondary);">Kitap olarak ekleyip fiyat girmek ve fişe eklemek ister misiniz?</p>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-outline" data-close="unknown-barcode-modal">Hayır</button>
+      <button type="button" class="btn btn-primary" id="add-unknown-product-btn">Kitap Ekle</button>
+    </div>
+  </div>
+</div>
+
+<!-- KİTAP EKLE / DÜZENLE (YAZAR OPSİYONEL) -->
+<div class="modal-overlay" id="product-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="product-modal-title">Kitap Ekle</div>
+      <button type="button" class="modal-close" data-close="product-modal">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="edit-product-id">
+      <div class="form-row">
+        <div class="form-group">
+          <label>Kitap Adı *</label>
+          <input type="text" class="input" id="p-name" placeholder="Kitap adı">
+        </div>
+        <div class="form-group">
+          <label>Yazar (opsiyonel)</label>
+          <input type="text" class="input" id="p-author" placeholder="Boş bırakılabilir">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Yayınevi</label>
+          <select class="input" id="p-publisher">
+            <option value="nübihar">Nübihar</option>
+            <option value="zehra">Zehra</option>
+            <option value="other">Diğer</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Fiyat (₺) *</label>
+          <input type="number" class="input" id="p-price" placeholder="0.00" min="0" step="0.01">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Barkod (opsiyonel)</label>
+          <div style="display:flex; gap:6px;">
+            <input type="text" class="input" id="p-barcode" placeholder="Barkod">
+            <button type="button" class="btn btn-soft btn-sm" id="product-cam-btn">Kamera</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Durum</label>
+          <select class="input" id="p-available">
+            <option value="true">Var</option>
+            <option value="false">Yok</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Not (opsiyonel)</label>
+        <input type="text" class="input" id="p-notes" placeholder="İsteğe bağlı not...">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-outline" data-close="product-modal">İptal</button>
+      <button type="button" class="btn btn-primary" id="save-product-btn">Kaydet</button>
+    </div>
+  </div>
+</div>
+
+<!-- EXCEL TOPLU YÜKLEME -->
+<div class="modal-overlay" id="excel-import-modal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title">Excel'den Toplu Kitap Yükle</div>
+      <button type="button" class="modal-close" data-close="excel-import-modal">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="font-size:13px; color:var(--text-secondary);">
+        Dosyada <strong>Kitap Adı</strong> ve <strong>Fiyat</strong> olması yeterlidir. Yazar, Yayınevi ve Barkod isteğe bağlıdır.
+      </div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+        <button type="button" class="btn btn-soft btn-sm" id="excel-modal-template-btn">Örnek Excel İndir</button>
+        <label style="font-size:12.5px; color:var(--text-secondary); display:inline-flex; align-items:center; gap:5px;">
+          <input type="checkbox" id="excel-update-existing" checked>
+          Mevcut kitapların fiyatını güncelle
+        </label>
+        <select class="input" id="excel-default-pub" style="width:130px; margin-left:auto;">
+          <option value="nübihar">Varsayılan: Nübihar</option>
+          <option value="zehra">Varsayılan: Zehra</option>
+          <option value="other">Varsayılan: Diğer</option>
+        </select>
+      </div>
+
+      <div class="dropzone" id="excel-dropzone">
+        <div style="font-weight:600; color:var(--primary-text);">Excel dosyasını seçin veya buraya bırakın</div>
+        <div style="font-size:12px; color:var(--text-muted); margin-top:4px;">.xlsx, .xls, .csv</div>
+        <input type="file" id="excel-file-input" accept=".xlsx,.xls,.csv" style="display:none;">
+      </div>
+
+      <div id="excel-preview-area" style="display:none;">
+        <div style="font-size:12.5px; font-weight:600; margin-bottom:6px;" id="excel-preview-summary"></div>
+        <div class="table-box" style="max-height:220px; overflow-y:auto; box-shadow:none;">
+          <table>
+            <thead>
+              <tr>
+                <th>Kitap Adı</th>
+                <th>Yazar</th>
+                <th>Yayınevi</th>
+                <th>Barkod</th>
+                <th style="text-align:right;">Fiyat</th>
+              </tr>
+            </thead>
+            <tbody id="excel-preview-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-outline" data-close="excel-import-modal">İptal</button>
+      <button type="button" class="btn btn-primary" id="confirm-excel-import-btn" disabled>Kitapları Yükle</button>
+    </div>
+  </div>
+</div>
+
+<!-- İADE AL -->
+<div class="modal-overlay" id="return-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="return-modal-title">İade Al</div>
+      <button type="button" class="modal-close" data-close="return-modal">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="font-size:12.5px; color:var(--text-secondary);" id="return-modal-info"></div>
+      <div class="table-box" style="max-height:240px; overflow-y:auto; box-shadow:none;">
+        <table>
+          <thead>
+            <tr>
+              <th>Kitap</th>
+              <th>Alınan</th>
+              <th style="width:90px;">İade Adedi</th>
+              <th style="text-align:right;">Tutar</th>
+            </tr>
+          </thead>
+          <tbody id="return-items-tbody"></tbody>
+        </table>
+      </div>
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 12px; border-radius:8px; background:var(--red-bg); border:1px solid var(--red-border);">
+        <span style="font-weight:600; color:var(--red);">Toplam İade:</span>
+        <strong style="font-size:18px; color:var(--red);" id="return-total-display">0,00 ₺</strong>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-outline" data-close="return-modal">İptal</button>
+      <button type="button" class="btn btn-danger" id="confirm-return-btn">İadeyi Kaydet</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOPLU FİYAT -->
+<div class="modal-overlay" id="bulk-price-modal">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <div class="modal-title">Toplu Fiyat Güncelle</div>
+      <button type="button" class="modal-close" data-close="bulk-price-modal">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Yayınevi</label>
+        <select class="input" id="bp-publisher">
+          <option value="all">Tüm Kitaplar</option>
+          <option value="nübihar">Nübihar</option>
+          <option value="zehra">Zehra</option>
+          <option value="other">Diğer</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Oran (%)</label>
+        <input type="number" class="input" id="bp-percent" placeholder="Örn: 15 veya -10" step="1">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-outline" data-close="bulk-price-modal">İptal</button>
+      <button type="button" class="btn btn-primary" id="apply-bulk-price-btn">Uygula</button>
+    </div>
+  </div>
+</div>
+
+<!-- KAMERA -->
+<div class="modal-overlay" id="camera-modal">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <div class="modal-title">Kamera Barkod</div>
+      <button type="button" class="modal-close" data-close="camera-modal" id="close-camera-btn">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="camera-preview-container"><div id="camera-reader"></div></div>
+      <p style="font-size:12px; color:var(--text-muted); text-align:center;">Barkodu kameraya gösterin.</p>
+    </div>
+  </div>
+</div>
+
+<!-- FİŞ GÖRÜNTÜLE / YAZDIR -->
+<div class="modal-overlay" id="receipt-view-modal">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <div class="modal-title">Fiş</div>
+      <button type="button" class="modal-close" data-close="receipt-view-modal">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="receipt-view-content"></div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-outline" data-close="receipt-view-modal">Kapat</button>
+      <button type="button" class="btn btn-primary" id="print-receipt-btn">Yazdır</button>
+    </div>
+  </div>
+</div>
+
+<script src="js/app.js"></script>
+</body>
+</html>

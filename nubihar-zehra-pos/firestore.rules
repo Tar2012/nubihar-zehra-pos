@@ -1,0 +1,355 @@
+rules_version = '2';
+
+// ===============================================================
+// Assumed Data Model — Nübihar & Zehra Yayınları Hızlı Satış Paneli (POS)
+// ===============================================================
+//
+// Authentication Model:
+//   - No login screen or user accounts collection; the POS client silently
+//     authenticates in the background via Firebase Anonymous Auth
+//     (auth.signInAnonymously()).
+//   - All rules require `request.auth != null` (no unauthenticated public access).
+//   - Note: Because Anonymous Auth grants a valid auth token to any client of
+//     this Firebase project without user credentials, consider enabling Firebase
+//     App Check or stricter authentication before broadly sharing the app.
+//
+// Collection: products
+// Document ID: {productId} (auto-generated)
+// Fields:
+//   - name: string (required, 1..200 chars) - Book title
+//   - author: string | null (optional, 0..150 chars) - Author name (not required)
+//   - publisher: string (required, 'nübihar' | 'zehra' | 'other') - Publisher key
+//   - price: number (required, 0..10000000) - Unit price in TRY
+//   - barcode: string | null (optional, 0..64 chars) - ISBN / barcode
+//   - available: bool (required) - Stock availability flag
+//   - notes: string | null (optional, 0..500 chars) - Optional notes
+//   - createdAt: timestamp (required, server time on create, immutable)
+//   - updatedAt: timestamp (required, server time on create and update)
+// Access:
+//   - Read, Create, Update, Delete: Authenticated POS session (request.auth != null)
+//
+// Collection: receipts
+// Document ID: {receiptId} (auto-generated)
+// Fields:
+//   - receiptNo: string (required, 1..32 chars, '^FİŞ-[0-9]{4,10}$' for sale or
+//     '^İADE-[0-9]{4,10}$' for return; immutable)
+//   - type: string (required, 'sale' | 'return', immutable)
+//   - originalReceiptNo: string | null (optional, 0..32 chars) - Linked sale receipt for returns
+//   - items: list<map> (required, size 1..200; item keys: productId, name, author,
+//     publisher, price, quantity, optional discountPct 0..100)
+//   - subtotal: number (required, 0..100000000)
+//   - discountPct: number (required, 0..100)
+//   - discountAmount: number (required, 0..subtotal)
+//   - total: number (required, 0..subtotal, consistent with subtotal - discountAmount)
+//   - paymentType: string (required, 'cash' | 'card' | 'transfer')
+//   - cashReceived: number | null (optional, 0..100000000; null for non-cash)
+//   - change: number | null (optional, 0..100000000; null for non-cash)
+//   - notes: string | null (optional, 0..500 chars) - Optional note / edit or return reason
+//   - createdAt: timestamp (required, server time on create, immutable)
+//   - updatedAt: timestamp (optional, server time when set/modified)
+// Access:
+//   - Read, Create, Update (edit/remove items), Delete: Authenticated POS session
+//
+// Collection: settings
+// Document ID: 'business'
+// Fields:
+//   - businessName: string (required, 0..150 chars)
+//   - address: string (required, 0..300 chars)
+//   - phone: string (required, 0..40 chars)
+//   - thanks: string (required, 0..300 chars)
+//   - updatedAt: timestamp (required, server time on create and update)
+// Access:
+//   - Read, Create, Update: Authenticated POS session
+//   - Delete: Denied
+//
+// Document ID: 'receipts'
+// Fields:
+//   - lastNo: int (optional if lastReturnNo set, 0..1000000000; monotonic +1)
+//   - lastReturnNo: int (optional, 0..1000000000; monotonic +1)
+// Access:
+//   - Read, Create, Update: Authenticated POS session (transactional counter)
+//   - Delete: Denied
+//
+// Collection: backups
+// Document ID: {backupId} (auto-generated)
+// Fields:
+//   - createdAt: timestamp (required, server time on create)
+//   - reason: string (required, 1..40 chars) - Snapshot trigger reason
+//   - productsCount: int (required, 0..100000)
+//   - receiptsCount: int (required, 0..1000000)
+//   - payloadJson: string (required, 2..900000 chars) - Serialized backup JSON
+// Access:
+//   - Read, Create, Delete: Authenticated POS session
+//   - Update: Denied (immutable backup snapshots)
+//
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function uidUnchanged() {
+      return !('uid' in request.resource.data) ||
+             request.resource.data.uid == request.auth.uid;
+    }
+
+    function uidNotModified() {
+      return !('uid' in request.resource.data) ||
+             request.resource.data.uid == resource.data.uid;
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function areImmutableFieldsUnchanged(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
+    function isValidString(val, minLen, maxLen) {
+      return val is string && val.size() >= minLen && val.size() <= maxLen;
+    }
+
+    function isValidOptionalNullableString(data, field, maxLen) {
+      return !(field in data) ||
+             data[field] == null ||
+             (data[field] is string && data[field].size() <= maxLen);
+    }
+
+    function isCounterUnchanged(data, prev, field) {
+      return (!(field in prev) && (!(field in data) || data[field] == 0)) ||
+             ((field in prev) && (field in data) && data[field] == prev[field]);
+    }
+
+    function isCounterIncremented(data, prev, field) {
+      return (!(field in prev) && (field in data) && data[field] == 1) ||
+             ((field in prev) && (field in data) && prev[field] is int && data[field] == prev[field] + 1);
+    }
+
+    // ===============================================================
+    // Domain Validators (Used in BOTH create and update)
+    // ===============================================================
+
+    function isValidProduct(data) {
+      return hasOnlyAllowedFields([
+               'name', 'author', 'publisher', 'price', 'barcode',
+               'available', 'notes', 'createdAt', 'updatedAt'
+             ]) &&
+             hasRequiredFields(['name', 'publisher', 'price', 'available', 'createdAt', 'updatedAt']) &&
+             isValidString(data.name, 1, 200) &&
+             isValidOptionalNullableString(data, 'author', 150) &&
+             data.publisher in ['nübihar', 'zehra', 'other'] &&
+             data.price is number && data.price >= 0 && data.price <= 10000000 &&
+             isValidOptionalNullableString(data, 'barcode', 64) &&
+             data.available is bool &&
+             isValidOptionalNullableString(data, 'notes', 500) &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    function isValidReceiptItem(item) {
+      return item is map &&
+             item.keys().hasOnly(['productId', 'name', 'author', 'publisher', 'price', 'quantity', 'discountPct']) &&
+             item.keys().hasAll(['productId', 'name', 'price', 'quantity']) &&
+             isValidString(item.productId, 1, 128) &&
+             isValidString(item.name, 1, 200) &&
+             (!('author' in item) || item.author == null || isValidString(item.author, 0, 150)) &&
+             (!('publisher' in item) || item.publisher == null || isValidString(item.publisher, 0, 32)) &&
+             item.price is number && item.price >= 0 && item.price <= 10000000 &&
+             item.quantity is int && item.quantity >= 1 && item.quantity <= 10000 &&
+             (!('discountPct' in item) || item.discountPct == null ||
+              (item.discountPct is number && item.discountPct >= 0 && item.discountPct <= 100));
+    }
+
+    function isValidReceipt(data) {
+      return hasOnlyAllowedFields([
+               'receiptNo', 'type', 'originalReceiptNo', 'items',
+               'subtotal', 'discountPct', 'discountAmount', 'total',
+               'paymentType', 'cashReceived', 'change', 'notes',
+               'createdAt', 'updatedAt'
+             ]) &&
+             hasRequiredFields([
+               'receiptNo', 'type', 'items', 'subtotal',
+               'discountPct', 'discountAmount', 'total',
+               'paymentType', 'createdAt'
+             ]) &&
+             data.type in ['sale', 'return'] &&
+             isValidString(data.receiptNo, 1, 32) &&
+             data.receiptNo.matches('^(FİŞ|İADE)-[0-9]{4,10}$') &&
+             (
+               (data.type == 'sale' && data.receiptNo.matches('^FİŞ-[0-9]{4,10}$')) ||
+               (data.type == 'return' && data.receiptNo.matches('^İADE-[0-9]{4,10}$'))
+             ) &&
+             isValidOptionalNullableString(data, 'originalReceiptNo', 32) &&
+             data.items is list &&
+             data.items.size() >= 1 &&
+             data.items.size() <= 200 &&
+             isValidReceiptItem(data.items[0]) &&
+             (data.items.size() <= 2 || isValidReceiptItem(data.items[1])) &&
+             isValidReceiptItem(data.items[data.items.size() - 1]) &&
+             data.subtotal is number && data.subtotal >= 0 && data.subtotal <= 100000000 &&
+             data.discountPct is number && data.discountPct >= 0 && data.discountPct <= 100 &&
+             data.discountAmount is number && data.discountAmount >= 0 && data.discountAmount <= data.subtotal + 0.01 &&
+             data.total is number && data.total >= 0 && data.total <= data.subtotal + 0.01 &&
+             math.abs((data.subtotal - data.discountAmount) - data.total) <= 0.05 &&
+             data.paymentType in ['cash', 'card', 'transfer'] &&
+             (
+               (data.paymentType == 'cash' &&
+                (!('cashReceived' in data) || data.cashReceived == null ||
+                 (data.cashReceived is number && data.cashReceived >= 0 && data.cashReceived <= 100000000)) &&
+                (!('change' in data) || data.change == null ||
+                 (data.change is number && data.change >= 0 && data.change <= 100000000)) &&
+                (!('cashReceived' in data) || !('change' in data) ||
+                 data.cashReceived == null || data.change == null ||
+                 data.change <= data.cashReceived + 0.01)) ||
+               (data.paymentType != 'cash' &&
+                (!('cashReceived' in data) || data.cashReceived == null) &&
+                (!('change' in data) || data.change == null))
+             ) &&
+             isValidOptionalNullableString(data, 'notes', 500) &&
+             data.createdAt is timestamp &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp);
+    }
+
+    function isValidBusinessSettings(data) {
+      return hasOnlyAllowedFields(['businessName', 'address', 'phone', 'thanks', 'updatedAt']) &&
+             hasRequiredFields(['businessName', 'address', 'phone', 'thanks', 'updatedAt']) &&
+             isValidString(data.businessName, 0, 150) &&
+             isValidString(data.address, 0, 300) &&
+             isValidString(data.phone, 0, 40) &&
+             isValidString(data.thanks, 0, 300) &&
+             data.updatedAt is timestamp &&
+             data.updatedAt == request.time;
+    }
+
+    function isValidReceiptCounter(data) {
+      return hasOnlyAllowedFields(['lastNo', 'lastReturnNo']) &&
+             (('lastNo' in data) || ('lastReturnNo' in data)) &&
+             (!('lastNo' in data) || (data.lastNo is int && data.lastNo >= 0 && data.lastNo <= 1000000000)) &&
+             (!('lastReturnNo' in data) || (data.lastReturnNo is int && data.lastReturnNo >= 0 && data.lastReturnNo <= 1000000000));
+    }
+
+    function isValidBackup(data) {
+      return hasOnlyAllowedFields(['createdAt', 'reason', 'productsCount', 'receiptsCount', 'payloadJson']) &&
+             hasRequiredFields(['createdAt', 'reason', 'productsCount', 'receiptsCount', 'payloadJson']) &&
+             data.createdAt is timestamp &&
+             isValidString(data.reason, 1, 40) &&
+             data.productsCount is int && data.productsCount >= 0 && data.productsCount <= 100000 &&
+             data.receiptsCount is int && data.receiptsCount >= 0 && data.receiptsCount <= 1000000 &&
+             isValidString(data.payloadJson, 2, 900000);
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    // Products (books catalog)
+    match /products/{productId} {
+      allow read: if isAuthenticated();
+
+      allow create: if isAuthenticated() &&
+                       isValidProduct(request.resource.data) &&
+                       request.resource.data.createdAt == request.time &&
+                       request.resource.data.updatedAt == request.time;
+
+      allow update: if isAuthenticated() &&
+                       isValidProduct(request.resource.data) &&
+                       areImmutableFieldsUnchanged(['createdAt']) &&
+                       request.resource.data.updatedAt == request.time;
+
+      allow delete: if isAuthenticated();
+    }
+
+    // Receipts (sales & return/refund receipts; editable and deletable per POS requirements)
+    match /receipts/{receiptId} {
+      allow read: if isAuthenticated();
+
+      allow create: if isAuthenticated() &&
+                       isValidReceipt(request.resource.data) &&
+                       request.resource.data.createdAt == request.time &&
+                       (!('updatedAt' in request.resource.data) || request.resource.data.updatedAt == request.time) &&
+                       (
+                         request.resource.data.type != 'sale' ||
+                         request.resource.data.paymentType != 'cash' ||
+                         !('cashReceived' in request.resource.data) ||
+                         request.resource.data.cashReceived == null ||
+                         request.resource.data.cashReceived >= request.resource.data.total - 0.01
+                       );
+
+      allow update: if isAuthenticated() &&
+                       isValidReceipt(request.resource.data) &&
+                       areImmutableFieldsUnchanged(['receiptNo', 'type', 'createdAt']) &&
+                       (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['updatedAt']) ||
+                        request.resource.data.updatedAt == request.time);
+
+      allow delete: if isAuthenticated();
+    }
+
+    // Business settings (receipt header/footer info)
+    match /settings/business {
+      allow read: if isAuthenticated();
+
+      allow create: if isAuthenticated() &&
+                       isValidBusinessSettings(request.resource.data);
+
+      allow update: if isAuthenticated() &&
+                       isValidBusinessSettings(request.resource.data);
+
+      allow delete: if false;
+    }
+
+    // Transactional receipt & return numbering counter
+    match /settings/receipts {
+      allow read: if isAuthenticated();
+
+      allow create: if isAuthenticated() &&
+                       isValidReceiptCounter(request.resource.data) &&
+                       (!('lastNo' in request.resource.data) || request.resource.data.lastNo in [0, 1]) &&
+                       (!('lastReturnNo' in request.resource.data) || request.resource.data.lastReturnNo in [0, 1]);
+
+      allow update: if isAuthenticated() &&
+                       isValidReceiptCounter(request.resource.data) &&
+                       (
+                         (isCounterIncremented(request.resource.data, resource.data, 'lastNo') &&
+                          isCounterUnchanged(request.resource.data, resource.data, 'lastReturnNo')) ||
+                         (isCounterIncremented(request.resource.data, resource.data, 'lastReturnNo') &&
+                          isCounterUnchanged(request.resource.data, resource.data, 'lastNo'))
+                       );
+
+      allow delete: if false;
+    }
+
+    // Automatic cloud backup snapshots
+    match /backups/{backupId} {
+      allow read: if isAuthenticated();
+
+      allow create: if isAuthenticated() &&
+                       isValidBackup(request.resource.data) &&
+                       request.resource.data.createdAt == request.time;
+
+      allow update: if false;
+
+      allow delete: if isAuthenticated();
+    }
+
+    // Default deny all other collections, subcollections, and documents
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
