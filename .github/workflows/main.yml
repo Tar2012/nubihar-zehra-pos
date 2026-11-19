@@ -21,12 +21,22 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Stamp version.json for Auto-Update
+      - name: Locate index.html & Stamp version.json
+        id: locate
         run: |
+          INDEX_PATH=$(find . -maxdepth 4 -name 'index.html' -not -path './www/*' -not -path './android/*' -not -path './node_modules/*' | head -n 1)
+          if [ -z "$INDEX_PATH" ]; then
+            echo "ERROR: index.html bulunamadi! Lutfen index.html, css ve js klasorlerini depoya yukleyin."
+            ls -la
+            exit 1
+          fi
+          APP_DIR=$(dirname "$INDEX_PATH")
+          echo "app_dir=$APP_DIR" >> "$GITHUB_OUTPUT"
           node -e "
             const fs = require('fs');
+            const path = require('path');
             const v = { version: '${{ github.run_number }}', commit: '${{ github.sha }}'.slice(0, 7), updatedAt: new Date().toISOString() };
-            fs.writeFileSync('version.json', JSON.stringify(v, null, 2));
+            fs.writeFileSync(path.join('$APP_DIR', 'version.json'), JSON.stringify(v, null, 2));
           "
 
       - name: Setup Pages
@@ -36,7 +46,7 @@ jobs:
       - name: Upload Pages Artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: '.'
+          path: ${{ steps.locate.outputs.app_dir }}
 
       - name: Deploy to GitHub Pages
         id: deployment
@@ -63,14 +73,21 @@ jobs:
 
       - name: Prepare Web Assets & Capacitor Config
         run: |
-          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          REPO="${{ github.event.repository.name }}"
-          LIVE_URL="https://${OWNER}.github.io/${REPO}/"
+          INDEX_PATH=$(find . -maxdepth 4 -name 'index.html' -not -path './www/*' -not -path './android/*' -not -path './node_modules/*' | head -n 1)
+          if [ -z "$INDEX_PATH" ]; then
+            echo "ERROR: index.html bulunamadi!"
+            exit 1
+          fi
+          APP_DIR=$(dirname "$INDEX_PATH")
 
           mkdir -p www
           for item in index.html manifest.json sw.js icon.svg version.json css js; do
-            if [ -e "$item" ]; then cp -r "$item" www/; fi
+            if [ -e "$APP_DIR/$item" ]; then cp -r "$APP_DIR/$item" www/; fi
           done
+
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          REPO="${{ github.event.repository.name }}"
+          LIVE_URL="https://${OWNER}.github.io/${REPO}/"
 
           cat > package.json << 'EOF'
           {
