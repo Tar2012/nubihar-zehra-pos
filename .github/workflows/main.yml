@@ -1,0 +1,104 @@
+name: Build Android APK & Live Auto-Update
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  deploy-live-web:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Stamp version.json for Auto-Update
+        run: |
+          node -e "
+            const fs = require('fs');
+            const v = { version: '${{ github.run_number }}', commit: '${{ github.sha }}'.slice(0, 7), updatedAt: new Date().toISOString() };
+            fs.writeFileSync('version.json', JSON.stringify(v, null, 2));
+          "
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+        continue-on-error: true
+
+      - name: Upload Pages Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+
+  build-apk:
+    needs: deploy-live-web
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Stamp version.json & Link Live Auto-Update URL if Pages is Active
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          REPO="${{ github.event.repository.name }}"
+          LIVE_URL="https://${OWNER}.github.io/${REPO}/"
+          node -e "
+            const fs = require('fs');
+            const v = { version: '${{ github.run_number }}', commit: '${{ github.sha }}'.slice(0, 7), updatedAt: new Date().toISOString() };
+            fs.writeFileSync('version.json', JSON.stringify(v, null, 2));
+          "
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$LIVE_URL" || echo "000")
+          if [ "$HTTP_CODE" = "200" ]; then
+            node -e "
+              const fs = require('fs');
+              const cfg = JSON.parse(fs.readFileSync('capacitor.config.json', 'utf8'));
+              cfg.server = { url: '$LIVE_URL', cleartext: false, androidScheme: 'https' };
+              fs.writeFileSync('capacitor.config.json', JSON.stringify(cfg, null, 2));
+            "
+          fi
+
+      - name: Install Capacitor & Prepare Android Project
+        run: |
+          npm install
+          npm run prepare-www
+          npx cap add android
+
+      - name: Enable Android Camera Permission
+        run: |
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          sed -i 's/<uses-permission android:name="android.permission.INTERNET" \/>/<uses-permission android:name="android.permission.INTERNET" \/>\n    <uses-permission android:name="android.permission.CAMERA" \/>\n    <uses-feature android:name="android.hardware.camera" android:required="false" \/>/' "$MANIFEST"
+
+      - name: Build Debug APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NubiharZehra-POS-Android-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
